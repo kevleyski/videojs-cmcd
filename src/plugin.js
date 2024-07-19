@@ -1,10 +1,9 @@
-import videojs from 'video.js';
-import {version as VERSION} from '../package.json';
-import { CmcdRequest } from './cmcdKeys/cmcdRequest';
-import { CmcdObject } from './cmcdKeys/cmcdObject';
-import { CmcdSession } from './cmcdKeys/cmcdSession';
-import { CmcdStatus } from './cmcdKeys/cmcdStatus';
+import { appendCmcdHeaders } from '@svta/common-media-library/cmcd/appendCmcdHeaders';
 import { appendCmcdQuery } from '@svta/common-media-library/cmcd/appendCmcdQuery';
+import { uuid } from '@svta/common-media-library/utils/uuid';
+import videojs from 'video.js';
+import { version as VERSION } from '../package.json';
+import { CmcdData } from './CmcdData.js';
 
 const Plugin = videojs.getPlugin('plugin');
 
@@ -37,10 +36,11 @@ class Cmcd extends Plugin {
     // the parent class will add player under this.player
     super(player);
     this.options = videojs.obj.merge(defaults, options);
-    const {sid, cid} = options || {};
+    const {sid, cid, useHeaders} = options || {};
 
     this.cid = cid;
-    this.sid = sid || generateUuid();
+    this.sid = sid || uuid();
+    this.useHeaders = useHeaders;
 
     this.player.ready(() => {
       player.addClass('vjs-cmcd');
@@ -50,18 +50,20 @@ class Cmcd extends Plugin {
       player.on('xhr-hooks-ready', () => {
 
         const playerXhrRequestHook = (opts) => {
-          const cmcdRequest = new CmcdRequest(this.player);
-          const cmcdObject = new CmcdObject(this.player);
-          const cmcdSession = new CmcdSession(this.player, this.sid, this.cid);
-          const cmcdStatus = new CmcdStatus(this.player);
+          const cmcd = new CmcdData(this.player, this.sid, this.cid);
+          const keys = cmcd.getKeys(opts.uri, isWaitingEvent, this.player.currentSrc());
 
-          const keyRequest = cmcdRequest.getKeys(opts.uri, isWaitingEvent);
-          const keyObject = cmcdObject.getKeys(opts.uri);
-          const keySession = cmcdSession.getKeys(this.player.currentSrc());
-          const keyStatus = cmcdStatus.getKeys(isWaitingEvent);
-          const cmcdKeysObject = Object.assign({}, keyRequest, keyObject, keySession, keyStatus);
+          if (this.useHeaders) {
+            const headers = appendCmcdHeaders({}, keys);
 
-          opts.uri = appendCmcdQuery(opts.uri, cmcdKeysObject);
+            opts.beforeSend = (xhr) => {
+              for (const h in headers) {
+                xhr.setRequestHeader(h, headers[h]);
+              }
+            };
+          } else {
+            opts.uri = appendCmcdQuery(opts.uri, keys);
+          }
 
           return opts;
         };
@@ -82,26 +84,6 @@ class Cmcd extends Plugin {
     }
   }
 
-}
-
-function generateUuid() {
-  const uuid = new Uint8Array(16);
-
-  for (let i = 0; i < uuid.length; i++) {
-    uuid[i] = Math.floor(Math.random() * 256);
-  }
-
-  // Set the version number to 4
-  uuid[6] = (uuid[6] & 0x0f) | 0x40;
-
-  // Set the variant number to 2
-  uuid[8] = (uuid[8] & 0x3f) | 0x80;
-
-  // Convert the UUID to a string in the canonical format
-  const hexDigits = Array.from(uuid, byte => byte.toString(16).padStart(2, '0'));
-  const hexString = hexDigits.join('');
-
-  return `${hexString.slice(0, 8)}-${hexString.slice(8, 12)}-4${hexString.slice(13, 16)}-${String.fromCharCode((uuid[8] & 0x0f) | 0x80)}${hexString.slice(17, 20)}-${hexString.slice(20)}`;
 }
 
 function handleEvents(player) {
